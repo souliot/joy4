@@ -3,7 +3,8 @@ package flv
 import (
 	"bufio"
 	"fmt"
-	"github.com/souliot/joy4/utils/bits/pio"
+	"io"
+
 	"github.com/souliot/joy4/av"
 	"github.com/souliot/joy4/av/avutil"
 	"github.com/souliot/joy4/codec"
@@ -11,7 +12,7 @@ import (
 	"github.com/souliot/joy4/codec/fake"
 	"github.com/souliot/joy4/codec/h264parser"
 	"github.com/souliot/joy4/format/flv/flvio"
-	"io"
+	"github.com/souliot/joy4/utils/bits/pio"
 )
 
 var MaxProbePacketCount = 20

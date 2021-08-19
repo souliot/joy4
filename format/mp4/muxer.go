@@ -1,34 +1,35 @@
 package mp4
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"time"
+
 	"github.com/souliot/joy4/av"
 	"github.com/souliot/joy4/codec/aacparser"
 	"github.com/souliot/joy4/codec/h264parser"
 	"github.com/souliot/joy4/format/mp4/mp4io"
 	"github.com/souliot/joy4/utils/bits/pio"
-	"io"
-	"bufio"
 )
 
 type Muxer struct {
-	w          io.WriteSeeker
-	bufw       *bufio.Writer
-	wpos       int64
-	streams    []*Stream
+	w       io.WriteSeeker
+	bufw    *bufio.Writer
+	wpos    int64
+	streams []*Stream
 }
 
 func NewMuxer(w io.WriteSeeker) *Muxer {
 	return &Muxer{
-		w: w,
+		w:    w,
 		bufw: bufio.NewWriterSize(w, pio.RecommendBufioSize),
 	}
 }
 
 func (self *Muxer) newStream(codec av.CodecData) (err error) {
 	switch codec.Type() {
-	case av.H264, av.AAC:
+	case av.H264, av.H265, av.AAC:
 
 	default:
 		err = fmt.Errorf("mp4: codec type=%v is not supported", codec.Type())
@@ -54,7 +55,7 @@ func (self *Muxer) newStream(codec av.CodecData) (err error) {
 
 	stream.trackAtom = &mp4io.Track{
 		Header: &mp4io.TrackHeader{
-			TrackId:  int32(len(self.streams)+1),
+			TrackId:  int32(len(self.streams) + 1),
 			Flags:    0x0003, // Track enabled | Track in movie
 			Duration: 0,      // fill later
 			Matrix:   [9]int32{0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000},
@@ -81,6 +82,8 @@ func (self *Muxer) newStream(codec av.CodecData) (err error) {
 	switch codec.Type() {
 	case av.H264:
 		stream.sample.SyncSample = &mp4io.SyncSample{}
+	case av.H265:
+		stream.sample.SyncSample = &mp4io.SyncSample{}
 	}
 
 	stream.timeScale = 90000
@@ -93,7 +96,6 @@ func (self *Muxer) newStream(codec av.CodecData) (err error) {
 func (self *Stream) fillTrackAtom() (err error) {
 	self.trackAtom.Media.Header.TimeScale = int32(self.timeScale)
 	self.trackAtom.Media.Header.Duration = int32(self.duration)
-
 	if self.Type() == av.H264 {
 		codec := self.CodecData.(h264parser.CodecData)
 		width, height := codec.Width(), codec.Height()
@@ -109,7 +111,7 @@ func (self *Stream) fillTrackAtom() (err error) {
 			Conf:                 &mp4io.AVC1Conf{Data: codec.AVCDecoderConfRecordBytes()},
 		}
 		self.trackAtom.Media.Handler = &mp4io.HandlerRefer{
-			SubType: [4]byte{'v','i','d','e'},
+			SubType: [4]byte{'v', 'i', 'd', 'e'},
 			Name:    []byte("Video Media Handler"),
 		}
 		self.trackAtom.Media.Info.Video = &mp4io.VideoMediaInfo{
@@ -117,7 +119,29 @@ func (self *Stream) fillTrackAtom() (err error) {
 		}
 		self.trackAtom.Header.TrackWidth = float64(width)
 		self.trackAtom.Header.TrackHeight = float64(height)
-
+	} else if self.Type() == av.H265 {
+		codec := self.CodecData.(h264parser.CodecData)
+		width, height := codec.Width(), codec.Height()
+		self.sample.SampleDesc.HV1Desc = &mp4io.HV1Desc{
+			DataRefIdx:           1,
+			HorizontalResolution: 72,
+			VorizontalResolution: 72,
+			Width:                int16(width),
+			Height:               int16(height),
+			FrameCount:           1,
+			Depth:                24,
+			ColorTableId:         -1,
+			Conf:                 &mp4io.HV1Conf{Data: codec.AVCDecoderConfRecordBytes()},
+		}
+		self.trackAtom.Media.Handler = &mp4io.HandlerRefer{
+			SubType: [4]byte{'v', 'i', 'd', 'e'},
+			Name:    []byte("Video Media Handler"),
+		}
+		self.trackAtom.Media.Info.Video = &mp4io.VideoMediaInfo{
+			Flags: 0x000001,
+		}
+		self.trackAtom.Header.TrackWidth = float64(width)
+		self.trackAtom.Header.TrackHeight = float64(height)
 	} else if self.Type() == av.AAC {
 		codec := self.CodecData.(aacparser.CodecData)
 		self.sample.SampleDesc.MP4ADesc = &mp4io.MP4ADesc{
@@ -132,7 +156,7 @@ func (self *Stream) fillTrackAtom() (err error) {
 		self.trackAtom.Header.Volume = 1
 		self.trackAtom.Header.AlternateGroup = 1
 		self.trackAtom.Media.Handler = &mp4io.HandlerRefer{
-			SubType: [4]byte{'s','o','u','n'},
+			SubType: [4]byte{'s', 'o', 'u', 'n'},
 			Name:    []byte("Sound Handler"),
 		}
 		self.trackAtom.Media.Info.Sound = &mp4io.SoundMediaInfo{}

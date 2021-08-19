@@ -9,6 +9,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+
+	//"log"
 	"net"
 	"net/textproto"
 	"net/url"
@@ -32,7 +34,8 @@ var DebugRtsp = false
 var SkipErrRtpBlock = false
 
 const (
-	stageDescribeDone = iota + 1
+	stageOptionsDone = iota + 1
+	stageDescribeDone
 	stageSetupDone
 	stageWaitCodecData
 	stageCodecDataDone
@@ -103,10 +106,7 @@ func DialTimeout(uri string, timeout time.Duration) (self *Client, err error) {
 	u2 := *URL
 	u2.User = nil
 
-	connt := &connWithTimeout{
-		Conn:    conn,
-		Timeout: timeout,
-	}
+	connt := &connWithTimeout{Conn: conn}
 
 	self = &Client{
 		conn:            connt,
@@ -122,36 +122,6 @@ func DialTimeout(uri string, timeout time.Duration) (self *Client, err error) {
 
 func Dial(uri string) (self *Client, err error) {
 	return DialTimeout(uri, 0)
-}
-
-func (self *Client) resetConn(uri string) (err error) {
-	var URL *url.URL
-	if URL, err = url.Parse(uri); err != nil {
-		return
-	}
-
-	if _, _, err := net.SplitHostPort(URL.Host); err != nil {
-		URL.Host = URL.Host + ":554"
-	}
-	timeout := self.conn.Timeout
-	dailer := net.Dialer{Timeout: timeout}
-	var conn net.Conn
-	if conn, err = dailer.Dial("tcp", URL.Host); err != nil {
-		return
-	}
-
-	u2 := *URL
-	u2.User = nil
-
-	connt := &connWithTimeout{
-		Conn:    conn,
-		Timeout: timeout,
-	}
-	self.conn = connt
-	self.brconn = bufio.NewReaderSize(connt, 256)
-	self.url = URL
-	self.requestUri = u2.String()
-	return
 }
 
 func (self *Client) allCodecDataReady() bool {
@@ -181,10 +151,13 @@ func (self *Client) prepare(stage int) (err error) {
 	for self.stage < stage {
 		switch self.stage {
 		case 0:
+			if err = self.Options(); err != nil {
+				return
+			}
+		case stageOptionsDone:
 			if _, err = self.Describe(); err != nil {
 				return
 			}
-
 		case stageDescribeDone:
 			if err = self.SetupAll(); err != nil {
 				return
@@ -227,6 +200,9 @@ func (self *Client) SendRtpKeepalive() (err error) {
 			req := Request{
 				Method: "OPTIONS",
 				Uri:    self.requestUri,
+			}
+			if self.session != "" {
+				req.Header = append(req.Header, "Session: "+self.session)
 			}
 			if err = self.WriteRequest(req); err != nil {
 				return
@@ -338,12 +314,49 @@ func (self *Client) handleResp(res *Response) (err error) {
 			self.session = fields[0]
 		}
 	}
+	if res.StatusCode == 301 {
+		if err = self.handle302(res); err != nil {
+			return
+		}
+	}
+	if res.StatusCode == 302 {
+		if err = self.handle302(res); err != nil {
+			return
+		}
+	}
 	if res.StatusCode == 401 {
 		if err = self.handle401(res); err != nil {
 			return
 		}
 	}
 	return
+}
+
+func (self *Client) handle302(res *Response) (err error) {
+	/*
+		RTSP/1.0 200 OK
+		CSeq: 302
+	*/
+	newLocation := res.Headers.Get("Location")
+	// fmt.Printf("\tRedirecting stream to other location: %s\n", newLocation)
+
+	err = self.Close()
+	if err != nil {
+		return err
+	}
+
+	newConnect, err := Dial(newLocation)
+	if err != nil {
+		return err
+	}
+
+	self.requestUri = newLocation
+	self.conn = newConnect.conn
+	self.brconn = newConnect.brconn
+
+	err = self.Options()
+
+	return err
 }
 
 func (self *Client) handle401(res *Response) (err error) {
@@ -469,11 +482,15 @@ func (self *Client) findRTSP() (block []byte, data []byte, err error) {
 			}
 			if blocklen, _, ok := self.parseBlockHeader(peek); ok {
 				left := blocklen + 4 - len(peek)
-				block = append(peek, make([]byte, left)...)
-				if _, err = io.ReadFull(self.brconn, block[len(peek):]); err != nil {
+				if left >= 0 {
+					block = append(peek, make([]byte, left)...)
+					if _, err = io.ReadFull(self.brconn, block[len(peek):]); err != nil {
+						return
+					}
 					return
+				} else {
+					fmt.Println("Left < 0 ", blocklen, len(peek), left)
 				}
-				return
 			}
 			stat = 0
 			peek = _peek[0:0]
@@ -690,10 +707,7 @@ func (self *Client) Describe() (streams []sdp.Media, err error) {
 		self.streams = append(self.streams, stream)
 		streams = append(streams, media)
 	}
-
-	if self.stage == 0 {
-		self.stage = stageDescribeDone
-	}
+	self.stage = stageDescribeDone
 	return
 }
 
@@ -708,16 +722,10 @@ func (self *Client) Options() (err error) {
 	if err = self.WriteRequest(req); err != nil {
 		return
 	}
-	res, err := self.ReadResponse()
-	switch res.StatusCode {
-	case 301:
-		self.Close()
-		err = self.resetConn(res.Headers.Get("Location"))
-		if err != nil {
-			return
-		}
-		err = self.Options()
+	if _, err = self.ReadResponse(); err != nil {
+		return
 	}
+	self.stage = stageOptionsDone
 	return
 }
 
@@ -767,7 +775,6 @@ func (self *Stream) timeScale() int {
 
 func (self *Stream) makeCodecData() (err error) {
 	media := self.Sdp
-
 	if media.PayloadType >= 96 && media.PayloadType <= 127 {
 		switch media.Type {
 		case av.H264:
@@ -806,6 +813,10 @@ func (self *Stream) makeCodecData() (err error) {
 				err = fmt.Errorf("rtsp: aac sdp config invalid: %s", err)
 				return
 			}
+		default:
+			//log.Fatalln("Fix Format may be raw PCM 97", media.PayloadType, media.Type)
+			err = fmt.Errorf("rtsp: Type=%d unsupported", media.Type)
+			return
 		}
 	} else {
 		switch media.PayloadType {
@@ -820,7 +831,6 @@ func (self *Stream) makeCodecData() (err error) {
 			return
 		}
 	}
-
 	return
 }
 
@@ -1148,7 +1158,6 @@ func (self *Client) Play() (err error) {
 	if err = self.WriteRequest(req); err != nil {
 		return
 	}
-
 	if self.allCodecDataReady() {
 		self.stage = stageCodecDataDone
 	} else {

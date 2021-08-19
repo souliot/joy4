@@ -8,16 +8,17 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"github.com/souliot/joy4/utils/bits/pio"
-	"github.com/souliot/joy4/av"
-	"github.com/souliot/joy4/av/avutil"
-	"github.com/souliot/joy4/format/flv"
-	"github.com/souliot/joy4/format/flv/flvio"
 	"io"
 	"net"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/souliot/joy4/av"
+	"github.com/souliot/joy4/av/avutil"
+	"github.com/souliot/joy4/format/flv"
+	"github.com/souliot/joy4/format/flv/flvio"
+	"github.com/souliot/joy4/utils/bits/pio"
 )
 
 var Debug bool
@@ -353,7 +354,7 @@ var CodecTypes = flv.CodecTypes
 
 func (self *Conn) writeBasicConf() (err error) {
 	// > SetChunkSize
-	if err = self.writeSetChunkSize(1024 * 1024 * 128); err != nil {
+	if err = self.writeSetChunkSize(1024 * 128); err != nil {
 		return
 	}
 	// > WindowAckSize

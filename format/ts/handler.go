@@ -2,6 +2,7 @@ package ts
 
 import (
 	"io"
+
 	"github.com/souliot/joy4/av"
 	"github.com/souliot/joy4/av/avutil"
 )
@@ -23,4 +24,3 @@ func Handler(h *avutil.RegisterHandler) {
 
 	h.CodecTypes = CodecTypes
 }
-

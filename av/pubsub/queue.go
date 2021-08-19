@@ -2,11 +2,12 @@
 package pubsub
 
 import (
-	"github.com/souliot/joy4/av"
-	"github.com/souliot/joy4/av/pktque"
 	"io"
 	"sync"
 	"time"
+
+	"github.com/souliot/joy4/av"
+	"github.com/souliot/joy4/av/pktque"
 )
 
 //        time

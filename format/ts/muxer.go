@@ -2,19 +2,21 @@ package ts
 
 import (
 	"fmt"
+	"io"
+	"time"
+
 	"github.com/souliot/joy4/av"
 	"github.com/souliot/joy4/codec/aacparser"
 	"github.com/souliot/joy4/codec/h264parser"
 	"github.com/souliot/joy4/format/ts/tsio"
-	"io"
-	"time"
 )
 
 var CodecTypes = []av.CodecType{av.H264, av.AAC}
 
 type Muxer struct {
-	w                        io.Writer
-	streams                  []*Stream
+	w       io.Writer
+	streams map[int]*Stream
+
 	PaddingToMakeCounterCont bool
 
 	psidata []byte
@@ -41,7 +43,7 @@ func NewMuxer(w io.Writer) *Muxer {
 	}
 }
 
-func (self *Muxer) newStream(codec av.CodecData) (err error) {
+func (self *Muxer) newStream(idx int, codec av.CodecData) (err error) {
 	ok := false
 	for _, c := range CodecTypes {
 		if codec.Type() == c {
@@ -54,20 +56,20 @@ func (self *Muxer) newStream(codec av.CodecData) (err error) {
 		return
 	}
 
-	pid := uint16(len(self.streams) + 0x100)
+	pid := uint16(idx + 0x100)
 	stream := &Stream{
 		muxer:     self,
 		CodecData: codec,
 		pid:       pid,
 		tsw:       tsio.NewTSWriter(pid),
 	}
-	self.streams = append(self.streams, stream)
+	self.streams[idx] = stream
 	return
 }
 
 func (self *Muxer) writePaddingTSPackets(tsw *tsio.TSWriter) (err error) {
 	for tsw.ContinuityCounter&0xf != 0x0 {
-		if err = tsw.WritePackets(self.w, self.datav[:0], 0, false, true); err != nil {
+		if err = tsw.WritePackets(self.w, self.datav[:1], 0, false, true); err != nil {
 			return
 		}
 	}
@@ -139,10 +141,11 @@ func (self *Muxer) WritePATPMT() (err error) {
 }
 
 func (self *Muxer) WriteHeader(streams []av.CodecData) (err error) {
-	self.streams = []*Stream{}
-	for _, stream := range streams {
-		if err = self.newStream(stream); err != nil {
-			return
+	self.streams = map[int]*Stream{}
+
+	for idx, stream := range streams {
+		if err = self.newStream(idx, stream); err != nil {
+			fmt.Println(err)
 		}
 	}
 
@@ -153,13 +156,19 @@ func (self *Muxer) WriteHeader(streams []av.CodecData) (err error) {
 }
 
 func (self *Muxer) WritePacket(pkt av.Packet) (err error) {
-	stream := self.streams[pkt.Idx]
+	var stream *Stream = nil
+
+	stream, ok := self.streams[int(pkt.Idx)]
+	if !ok {
+		fmt.Printf("Warning, unsupported stream index: %d\n", pkt.Idx)
+		return
+	}
+
 	pkt.Time += time.Second
 
 	switch stream.Type() {
 	case av.AAC:
 		codec := stream.CodecData.(aacparser.CodecData)
-
 		n := tsio.FillPESHeader(self.peshdr, tsio.StreamIdAAC, len(self.adtshdr)+len(pkt.Data), pkt.Time, 0)
 		self.datav[0] = self.peshdr[:n]
 		aacparser.FillADTSHeader(self.adtshdr, codec.Config, 1024, len(pkt.Data))

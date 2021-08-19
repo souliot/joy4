@@ -2,10 +2,11 @@ package flvio
 
 import (
 	"fmt"
-	"github.com/souliot/joy4/utils/bits/pio"
-	"github.com/souliot/joy4/av"
 	"io"
 	"time"
+
+	"github.com/souliot/joy4/av"
+	"github.com/souliot/joy4/utils/bits/pio"
 )
 
 func TsToTime(ts int32) time.Duration {
