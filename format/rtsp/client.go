@@ -41,7 +41,30 @@ const (
 	stageCodecDataDone
 )
 
+type ClientOp struct {
+	audio bool
+}
+
+var defaultClientOp = &ClientOp{
+	audio: true,
+}
+
+type Option func(*ClientOp)
+
+func (c *ClientOp) apply(opts []Option) {
+	for _, opt := range opts {
+		opt(c)
+	}
+}
+
+func WithAudio(b bool) Option {
+	return func(c *ClientOp) {
+		c.audio = b
+	}
+}
+
 type Client struct {
+	op        *ClientOp
 	DebugRtsp bool
 	DebugRtp  bool
 	Headers   []string
@@ -87,7 +110,7 @@ type Response struct {
 	Block []byte
 }
 
-func DialTimeout(uri string, timeout time.Duration) (self *Client, err error) {
+func DialTimeout(uri string, timeout time.Duration, ops ...Option) (self *Client, err error) {
 	var URL *url.URL
 	if URL, err = url.Parse(uri); err != nil {
 		return
@@ -108,6 +131,8 @@ func DialTimeout(uri string, timeout time.Duration) (self *Client, err error) {
 
 	connt := &connWithTimeout{Conn: conn}
 
+	defaultClientOp.apply(ops)
+
 	self = &Client{
 		conn:            connt,
 		brconn:          bufio.NewReaderSize(connt, 256),
@@ -116,12 +141,13 @@ func DialTimeout(uri string, timeout time.Duration) (self *Client, err error) {
 		DebugRtp:        DebugRtp,
 		DebugRtsp:       DebugRtsp,
 		SkipErrRtpBlock: SkipErrRtpBlock,
+		op:              defaultClientOp,
 	}
 	return
 }
 
-func Dial(uri string) (self *Client, err error) {
-	return DialTimeout(uri, 0)
+func Dial(uri string, ops ...Option) (self *Client, err error) {
+	return DialTimeout(uri, 0, ops...)
 }
 
 func (self *Client) allCodecDataReady() bool {
@@ -617,7 +643,10 @@ func (self *Client) ReadResponse() (res Response, err error) {
 
 func (self *Client) SetupAll() (err error) {
 	idx := []int{}
-	for i := range self.streams {
+	for i, stream := range self.streams {
+		if !self.op.audio && stream.Type().IsAudio() {
+			continue
+		}
 		idx = append(idx, i)
 	}
 	return self.Setup(idx)
