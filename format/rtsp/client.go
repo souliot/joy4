@@ -644,7 +644,7 @@ func (self *Client) ReadResponse() (res Response, err error) {
 func (self *Client) SetupAll() (err error) {
 	idx := []int{}
 	for i, stream := range self.streams {
-		if !self.op.audio && stream.Type().IsAudio() {
+		if !self.op.audio && stream.Sdp.Type.IsAudio() {
 			continue
 		}
 		idx = append(idx, i)
